@@ -1,40 +1,43 @@
-# Tennis RSS Feeds
+# RSS Feeds
 
-Three separate RSS feeds generated hourly:
+Custom RSS feeds for websites with missing, broken, or outdated feeds.
 
-- **WTA Tennis News** → `feeds/wta.xml`
-- **ESPN Tennis** → `feeds/espn-tennis.xml`
-- **Sportsnet Tennis** → `feeds/sportsnet-tennis.xml`
+Each feed is kept separate so it can be subscribed to individually in any RSS reader.
 
-They remain separate subscriptions. The repository simply keeps them together so there is only one small system to maintain.
+## Feeds
 
-## One-time setup
+### WTA Tennis News
+`feeds/wta.xml`
 
-1. Create a new **public** GitHub repository. A simple name such as `tennis-rss-feeds` works well.
-2. Upload all files and folders from this package, preserving the folder structure.
-3. In the repository, open **Settings → Pages**.
-4. Under **Build and deployment**, choose **Deploy from a branch**.
-5. Select branch **main** and folder **/ (root)**, then save.
-6. Open **Actions → Update RSS feeds → Run workflow** once to generate the first live feeds.
+### ESPN Tennis
+`feeds/espn-tennis.xml`
 
-After GitHub Pages publishes, your three feed URLs will be:
-
-- `https://YOUR-USERNAME.github.io/tennis-rss-feeds/feeds/wta.xml`
-- `https://YOUR-USERNAME.github.io/tennis-rss-feeds/feeds/espn-tennis.xml`
-- `https://YOUR-USERNAME.github.io/tennis-rss-feeds/feeds/sportsnet-tennis.xml`
-
-Replace `YOUR-USERNAME` if you choose a different GitHub account, and replace `tennis-rss-feeds` if you choose a different repository name.
+### Sportsnet Tennis
+`feeds/sportsnet-tennis.xml`
 
 ## How it works
 
-The GitHub Action runs once an hour.
+The feeds are regenerated automatically with GitHub Actions.
 
-- **ESPN:** reads ESPN's live ATP and WTA JSON news endpoints, combines them, and removes duplicates.
-- **WTA:** reads the WTA News index and follows current `/news/...` article links.
-- **Sportsnet:** reads the Sportsnet Tennis page and follows only real tennis article URLs, fixing the bad links in Sportsnet's native RSS feed.
+- ESPN Tennis uses ESPN's live tennis news data.
+- WTA Tennis News is generated from the current WTA news page.
+- Sportsnet Tennis is generated from the current Sportsnet tennis page and uses the correct individual article links.
 
-The generated XML files are ordinary RSS 2.0 feeds and can be added individually to an RSS reader.
+## Feed URLs
 
-## Notes
+Once GitHub Pages is enabled, the feeds are available at:
 
-Website layouts can change. If WTA or Sportsnet changes its URL structure later, the generator may need a small adjustment. The workflow deliberately fails rather than silently publishing an empty feed.
+`https://mojocolony.github.io/rss-feeds/feeds/wta.xml`
+
+`https://mojocolony.github.io/rss-feeds/feeds/espn-tennis.xml`
+
+`https://mojocolony.github.io/rss-feeds/feeds/sportsnet-tennis.xml`
+
+Additional feeds can be added to this repository over time.
+
+## Files
+
+- `generate_feeds.py` — generates the RSS feeds
+- `.github/workflows/update-feeds.yml` — automatically refreshes the feeds
+- `feeds/` — contains the generated RSS files
+- `.nojekyll` — tells GitHub Pages to serve the files directly
