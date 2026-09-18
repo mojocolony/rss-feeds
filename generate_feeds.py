@@ -4,7 +4,7 @@ import sys
 from datetime import datetime, timezone
 from email.utils import format_datetime
 from html import unescape
-from urllib.parse import urljoin
+from urllib.parse import urljoin, quote
 from urllib.request import Request, urlopen
 from xml.etree.ElementTree import Element, SubElement, ElementTree
 
@@ -17,7 +17,6 @@ HEADERS = {
     ),
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
     "Accept-Language": "en-CA,en;q=0.9",
-    "Cache-Control": "no-cache",
 }
 
 def fetch(url):
@@ -26,37 +25,41 @@ def fetch(url):
         return r.read().decode("utf-8", errors="replace")
 
 def clean(s):
-    s = re.sub(r"<[^>]+>", " ", s or "")
+    s = re.sub(r"<script\b[^>]*>.*?</script>", " ", s or "", flags=re.I | re.S)
+    s = re.sub(r"<style\b[^>]*>.*?</style>", " ", s, flags=re.I | re.S)
+    s = re.sub(r"<[^>]+>", " ", s)
     s = unescape(s)
     return re.sub(r"\s+", " ", s).strip()
 
-def extract_anchor_items(page_url, url_pattern, max_items=60):
+def extract_links(page_url, patterns, max_items=60):
     html = fetch(page_url)
-    rx = re.compile(url_pattern, re.I)
     anchor_rx = re.compile(
         r'<a\b[^>]*href=["\']([^"\']+)["\'][^>]*>(.*?)</a>',
         re.I | re.S
     )
+    regexes = [re.compile(p, re.I) for p in patterns]
 
     items = []
     seen = set()
 
     for href, inner in anchor_rx.findall(html):
         url = urljoin(page_url, href.split("#")[0])
-        if not rx.search(url):
+        if not any(rx.search(url) for rx in regexes):
             continue
 
         title = clean(inner)
         if len(title) < 8:
             continue
-        if title.lower() in {"read more", "learn more", "view more", "more", "watch now"}:
+        if title.lower() in {
+            "read more", "learn more", "view more", "more", "watch now",
+            "espn", "sportsnet"
+        }:
             continue
         if url in seen:
             continue
 
         seen.add(url)
         items.append({"title": title, "url": url})
-
         if len(items) >= max_items:
             break
 
@@ -88,32 +91,44 @@ def main():
         {
             "title": "WTA Tennis News",
             "page": "https://www.wtatennis.com/news",
-            "pattern": r"^https://www\.wtatennis\.com/news/\d+/",
+            "patterns": [r"^https://www\.wtatennis\.com/news/\d+/"],
             "description": "Current WTA tennis news.",
             "out": "feeds/wta.xml",
         },
         {
             "title": "ESPN Tennis",
-            "page": "https://www.espn.com/tennis/",
-            "pattern": r"^https://www\.espn\.com/tennis/(?:story|insider|article)/",
+            "page": "https://africa.espn.com/tennis/",
+            "patterns": [
+                r"^https://africa\.espn\.com/tennis/story/_/id/\d+/",
+                r"^https://www\.espn\.com/tennis/story/_/id/\d+/"
+            ],
             "description": "Current ESPN tennis news.",
             "out": "feeds/espn-tennis.xml",
         },
         {
             "title": "Sportsnet Tennis",
-            "page": "https://www.sportsnet.ca/tennis/",
-            "pattern": r"^https://www\.sportsnet\.ca/(?:tennis|atp|wta)/article/",
+            "page": "https://www.sportsnet.ca/?s=tennis",
+            "patterns": [
+                r"^https://www\.sportsnet\.ca/tennis/article/",
+                r"^https://www\.sportsnet\.ca/atp/article/",
+                r"^https://www\.sportsnet\.ca/wta/article/"
+            ],
             "description": "Current Sportsnet tennis news.",
             "out": "feeds/sportsnet-tennis.xml",
         },
     ]
 
     failed = []
-
     for job in jobs:
         try:
-            items = extract_anchor_items(job["page"], job["pattern"])
-            make_rss(items, job["title"], job["page"], job["description"], job["out"])
+            items = extract_links(job["page"], job["patterns"])
+            make_rss(
+                items,
+                job["title"],
+                job["page"],
+                job["description"],
+                job["out"],
+            )
         except Exception as e:
             failed.append(f'{job["title"]}: {e}')
             print(f'ERROR {job["title"]}: {e}', file=sys.stderr)
