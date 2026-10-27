@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 import re
 import sys
+import json
 from datetime import datetime, timezone
 from email.utils import format_datetime
 from html import unescape
 from urllib.parse import urljoin, quote
 from urllib.request import Request, urlopen
-from xml.etree.ElementTree import Element, SubElement, ElementTree
+from xml.etree.ElementTree import Element, SubElement, ElementTree, fromstring
 
 TIMEOUT = 30
 HEADERS = {
@@ -65,6 +66,66 @@ def extract_links(page_url, patterns, max_items=60):
 
     return items
 
+def extract_rss_items(feed_url, max_items=60):
+    """Read the publisher's own feed instead of scraping webpage links."""
+    root = fromstring(fetch(feed_url))
+    result, seen = [], set()
+    for entry in root.findall("./channel/item"):
+        title = (entry.findtext("title") or "").strip()
+        url = (entry.findtext("link") or "").strip()
+        if len(title) < 8 or not url.startswith(("https://", "http://")) or url in seen:
+            continue
+        seen.add(url)
+        result.append({"title": title, "url": url})
+        if len(result) >= max_items:
+            break
+    if not result:
+        raise RuntimeError("Publisher RSS feed returned no articles")
+    return result
+
+
+def extract_espn_news(max_items=60):
+    """Use ESPN's tennis news JSON, preserving direct article URLs."""
+    articles, seen, errors = [], set(), []
+    for league in ("atp", "wta"):
+        url = f"https://site.api.espn.com/apis/site/v2/sports/tennis/{league}/news?limit=50"
+        try:
+            data = json.loads(fetch(url))
+            for item in data.get("articles", []):
+                title = (item.get("headline") or "").strip()
+                links = item.get("links") or {}
+                href = (links.get("web") or {}).get("href") or ""
+                if not href.startswith(("https://", "http://")) or len(title) < 8 or href in seen:
+                    continue
+                seen.add(href)
+                articles.append({"title": title, "url": href})
+        except Exception as exc:
+            errors.append(f"{league}: {exc}")
+    if not articles:
+        raise RuntimeError("ESPN news API has no usable articles" +
+                           (f" ({'; '.join(errors)})" if errors else ""))
+    return articles[:max_items]
+
+
+def get_items(job):
+    """Try the most structured source first, then original HTML extraction."""
+    if job.get("api") == "espn":
+        try:
+            return extract_espn_news()
+        except Exception as exc:
+            print(f"WARNING {job['title']} API: {exc}", file=sys.stderr)
+        try:
+            return extract_rss_items("https://www.espn.com/espn/rss/tennis/news")
+        except Exception as exc:
+            print(f"WARNING {job['title']} RSS: {exc}", file=sys.stderr)
+    if job.get("feed"):
+        try:
+            return extract_rss_items(job["feed"])
+        except Exception as exc:
+            print(f"WARNING {job['title']} RSS: {exc}", file=sys.stderr)
+    return extract_links(job["page"], job["patterns"])
+
+
 def make_rss(items, title, site_url, description, out_path):
     if not items:
         raise RuntimeError(f"No article links found for {title}")
@@ -97,6 +158,7 @@ def main():
         },
         {
             "title": "ESPN Tennis",
+            "api": "espn",
             "page": "https://africa.espn.com/tennis/",
             "patterns": [
                 r"^https://africa\.espn\.com/tennis/story/_/id/\d+/",
@@ -107,6 +169,7 @@ def main():
         },
         {
             "title": "Sportsnet Tennis",
+            "feed": "https://www.sportsnet.ca/tennis/feed/",
             "page": "https://www.sportsnet.ca/?s=tennis",
             "patterns": [
                 r"^https://www\.sportsnet\.ca/tennis/article/",
@@ -119,9 +182,10 @@ def main():
     ]
 
     failed = []
+    succeeded = 0
     for job in jobs:
         try:
-            items = extract_links(job["page"], job["patterns"])
+            items = get_items(job)
             make_rss(
                 items,
                 job["title"],
@@ -129,15 +193,19 @@ def main():
                 job["description"],
                 job["out"],
             )
+            succeeded += 1
         except Exception as e:
             failed.append(f'{job["title"]}: {e}')
-            print(f'ERROR {job["title"]}: {e}', file=sys.stderr)
+            print(f'::warning title={job["title"]} unavailable::{e}', file=sys.stderr)
 
     if failed:
-        print("\nFailures:", file=sys.stderr)
+        print("\nSources not refreshed (previous XML, if any, was preserved):", file=sys.stderr)
         for f in failed:
             print(" - " + f, file=sys.stderr)
+    if succeeded == 0:
+        print("ERROR: No RSS sources could be refreshed.", file=sys.stderr)
         sys.exit(1)
+    print(f"Updated {succeeded}/{len(jobs)} feeds.")
 
 if __name__ == "__main__":
     main()
